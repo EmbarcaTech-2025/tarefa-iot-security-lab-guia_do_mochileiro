@@ -6,8 +6,30 @@
 #include "wifi_conn.h"          // Funções personalizadas de conexão WiFi
 #include "mqtt_comm.h"          // Funções personalizadas para MQTT
 #include "xor_cipher.h"         // Funções de cifra XOR
-#include "pico/time.h"
 #include "display.h"            // Funções de exibição no display SSD1306
+#include "button.h"     // Button handling module
+#include "joystick.h"   // Joystick handling module
+#include "mbedtls/md.h" // Para HMAC
+
+/**
+ * @brief Enumeração dos possíveis modos de operação.
+ * Define os diferentes modos de operação de segurança.
+ */
+typedef enum
+{
+    MAIN_MENU,
+    NORMAL_MODE,
+    XOR_MODE,
+    HMAC_MODE,
+    AES_MODE
+} OperationMode;
+
+// --- Estado do Sistema e UI ---
+OperationMode current_mode = MAIN_MENU;                                                               // Modo atual de operação.
+int main_menu_selected_idx = 0;                                                                       // Índice do item selecionado no menu principal.
+const char *main_menu_items[] = {"Sem seguranca", "Encriptacao XOR", "Autenticacao HMAC", "AES-GCM"}; // Itens do menu principal.
+const int main_menu_count = sizeof(main_menu_items) / sizeof(main_menu_items[0]);                     // Número de itens no menu principal.
+static volatile uint32_t last_btn_press_time = 0;
 
 int main()
 {
@@ -17,12 +39,18 @@ int main()
     // Inicializa o display
     display_init();
 
+    // Inicializa os botões
+    button_init();
+
+    // Inicializa o joystick
+    joystick_init();
+
     // Aguarda inicialização do terminal serial
     sleep_ms(5000);
 
     // Conecta à rede WiFi
     // Parâmetros em credentials.h
-    display_text_in_line("Conectando Wi-Fi...", 1);
+    display_text_in_line("Conectando Wi-Fi...", 1, 1);
     connect_to_wifi(WIFI_SSID, WIFI_PASSWORD);
 
     // Testa o link da conexão Wi-Fi
@@ -32,13 +60,13 @@ int main()
         return -1;
     }
     printf("Link da rede Wi-Fi estabelecido.\n");
-    display_text_in_line("Link estabecido!", 2);
+    display_text_in_line("Link estabecido!", 2, 1);
 
     // Configura o cliente MQTT
     // Parâmetros em credentials.h
     mqtt_setup(MQTT_CLIENT_ID_PUBLISHER, MQTT_BROKER_IP, MQTT_USER, MQTT_PASS);
     sleep_ms(1000);
-    display_text_in_line("Conectando MQTT...", 1);
+    display_text_in_line("Conectando MQTT...", 1, 1);
 
     printf("Aguardando conexao MQTT (3s)...\n"); // Tempo para o cliente MQTT conectar
     sleep_ms(3000);
@@ -50,8 +78,8 @@ int main()
         return -1;
     }
     printf("Conexão MQTT estabelecida.\n");
-    display_text_in_line("MQTT Conectado!", 2);
-    display_text_in_line(MQTT_CLIENT_ID_PUBLISHER, 3);
+    display_text_in_line("MQTT Conectado!", 2, 1);
+    display_text_in_line(MQTT_CLIENT_ID_PUBLISHER, 3, 1);
     sleep_ms(2000);
 
     // Loop principal do programa
@@ -83,10 +111,10 @@ int main()
         }
         printf("\n");
         hex_string_buffer[2 * strlen(mensagem)] = '\0'; // Garante terminação nula
-        display_text_in_line("Msg Original:", 1);
-        display_text_in_line(mensagem, 2);
-        display_text_in_line("Msg Cript (XOR):", 3);
-        display_text_in_line(hex_string_buffer, 4); // Exibe a string hexadecimal
+        display_text_in_line("Msg Original:", 1, 1);
+        display_text_in_line(mensagem, 2, 1);
+        display_text_in_line("Msg Cript (XOR):", 3, 1);
+        display_text_in_line(hex_string_buffer, 4, 1); // Exibe a string hexadecimal
 
         // Aguarda 5 segundos antes da próxima publicação
         sleep_ms(5000);

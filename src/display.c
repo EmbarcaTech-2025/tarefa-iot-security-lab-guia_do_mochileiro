@@ -42,13 +42,23 @@ void display_draw_initial_message()
     sleep_ms(1000); // Dê tempo para o usuário ver a mensagem
 }
 
-void display_text_in_line(const char *message, int line)
+void display_text_in_line(const char *message, int line, bool is_publisher)
 {
-    if (line <= 1) {
-    ssd1306_clear(&display);
+    if (line <= 1)
+    {
+        ssd1306_clear(&display);
+        if (is_publisher)
+        {
+            draw_top_title_publisher();
+        }
+        else
+        {
+            draw_top_title_subscriber();
+        }
     }
+
     // Exibir mensagem
-    ssd1306_draw_string(&display, 5, 5 + ((line - 1) * OLED_LINE_HEIGHT), 1, message);
+    ssd1306_draw_string(&display, 5, 15 + ((line - 1) * OLED_LINE_HEIGHT), 1, message);
     ssd1306_show(&display);
 }
 
@@ -59,12 +69,12 @@ void display_text_in_line(const char *message, int line)
  * @param selected true se o item estiver selecionado, false caso contrário.
  */
 void draw_menu_item(const char *text, int y_pos, bool selected)
-{ 
+{
     if (selected)
     {
         // Destaca o item selecionado (ex: com um retângulo ou cursor)
         ssd1306_draw_empty_square(&display, 0, y_pos - 2, OLED_WIDTH - 1, OLED_LINE_HEIGHT + 2); // Retângulo em volta
-        ssd1306_draw_string(&display, 5, y_pos, 1, text); // Texto com pequeno recuo
+        ssd1306_draw_string(&display, 5, y_pos, 1, text);                                        // Texto com pequeno recuo
     }
     else
     {
@@ -80,7 +90,7 @@ void draw_menu_item(const char *text, int y_pos, bool selected)
  * @param selected_idx Índice do item atualmente selecionado.
  */
 void draw_menu(const char *title, const char **items, int item_count, int selected_idx)
-{ 
+{
     ssd1306_clear(&display);
     // Centraliza o título
     ssd1306_draw_string(&display, (OLED_WIDTH - (strlen(title) * 6 /* largura da fonte */)) / 2, 0, 1, title);
@@ -95,26 +105,25 @@ void draw_menu(const char *title, const char **items, int item_count, int select
 }
 
 /**
- * @brief Desenha um menu de configuração no OLED (ex: taxa de amostragem, duração).
- * @param title Título do menu de configuração.
- * @param labels Array de strings com os rótulos das opções.
- * @param option_count Número de opções.
- * @param selected_idx Índice da opção atualmente selecionada para navegação.
- * @param current_config_idx Índice da configuração atualmente ativa.
+ * @brief Desenha titulo superior do Publisher
  */
-void draw_config_menu(const char *title, const char **labels, int option_count, int selected_idx, uint current_config_idx)
-{ 
+void draw_top_title_publisher()
+{
     ssd1306_clear(&display);
-    ssd1306_draw_string(&display, (OLED_WIDTH - (strlen(title) * 6)) / 2, 0, 1, title);
-    ssd1306_draw_line(&display, 0, OLED_LINE_HEIGHT - 2, OLED_WIDTH, OLED_LINE_HEIGHT - 2);
+    // Centraliza o título
+    ssd1306_draw_string(&display, (OLED_WIDTH - (strlen("PUBLISHER") * 6 /* largura da fonte */)) / 2, 0, 1, "PUBLISHER");
+    ssd1306_draw_line(&display, 0, OLED_LINE_HEIGHT - 2, OLED_WIDTH, OLED_LINE_HEIGHT - 2); // Linha separadora
+    ssd1306_show(&display);                                                                 // Atualiza o display
+}
 
-    int y_start = OLED_LINE_HEIGHT + 4;
-    for (int i = 0; i < option_count; ++i)
-    {
-        char item_text[32];
-        // Adiciona um ">" para indicar a configuração ativa
-        snprintf(item_text, sizeof(item_text), "%s %s", (i == current_config_idx) ? ">" : " ", labels[i]);
-        draw_menu_item(item_text, y_start + (i * (OLED_LINE_HEIGHT + 3)), i == selected_idx);
-    }
-    ssd1306_show(&display);
+/**
+ * @brief Desenha titulo superior do Subscriber
+ */
+void draw_top_title_subscriber()
+{
+    ssd1306_clear(&display);
+    // Centraliza o título
+    ssd1306_draw_string(&display, (OLED_WIDTH - (strlen("SUBSCRIBER") * 6 /* largura da fonte */)) / 2, 0, 1, "SUBSCRIBER");
+    ssd1306_draw_line(&display, 0, OLED_LINE_HEIGHT - 2, OLED_WIDTH, OLED_LINE_HEIGHT - 2); // Linha separadora
+    ssd1306_show(&display);                                                                 // Atualiza o display
 }

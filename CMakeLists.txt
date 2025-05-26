@@ -41,6 +41,8 @@ add_executable(publisher_firmware
     src/xor_cipher.c
     src/ssd1306.c
     src/display.c
+    src/button.c
+    src/joystick.c
 )
 
 add_executable(subscriber_firmware
@@ -50,6 +52,8 @@ add_executable(subscriber_firmware
     src/xor_cipher.c
     src/ssd1306.c
     src/display.c
+    src/button.c
+    src/joystick.c
 )
 
 pico_set_program_name(publisher_firmware "iot_security_lab_publisher")
@@ -78,6 +82,10 @@ set(LINK_LIBRARIES
         pico_cyw43_driver
         # i2c hardware driver, que permite comunicação com dispositivos I2C.        
         hardware_i2c
+        # adc hardware driver, que permite leitura de valores analógicos.
+        hardware_adc
+        # Biblioteca de criptografia mbedTLS, que fornece suporte a TLS/SSL.
+        pico_mbedtls
         )
 
 target_link_libraries(publisher_firmware ${LINK_LIBRARIES})

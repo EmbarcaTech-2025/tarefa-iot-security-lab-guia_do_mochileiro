@@ -7,6 +7,29 @@
 #include "mqtt_comm.h"          // Funções personalizadas para MQTT
 #include "xor_cipher.h"         // Funções de cifra XOR
 #include "display.h"
+#include "button.h"     // Button handling module
+#include "joystick.h"   // Joystick handling module
+#include "mbedtls/md.h" // Para HMAC
+
+/**
+ * @brief Enumeração dos possíveis modos de operação.
+ * Define os diferentes modos de operação de segurança.
+ */
+typedef enum
+{
+    MAIN_MENU,
+    NORMAL_MODE,
+    XOR_MODE,
+    HMAC_MODE,
+    AES_MODE
+} OperationMode;
+
+// --- Estado do Sistema e UI ---
+OperationMode current_mode = MAIN_MENU;                                                               // Modo atual de operação.
+int main_menu_selected_idx = 0;                                                                       // Índice do item selecionado no menu principal.
+const char *main_menu_items[] = {"Sem seguranca", "Encriptacao XOR", "Autenticacao HMAC", "AES-GCM"}; // Itens do menu principal.
+const int main_menu_count = sizeof(main_menu_items) / sizeof(main_menu_items[0]);                     // Número de itens no menu principal.
+static volatile uint32_t last_btn_press_time = 0;
 
 // Buffer para descriptografia
 #define PAYLOAD_MAX_LEN 256
@@ -60,10 +83,10 @@ void on_message(const char *topic, const uint8_t *payload, size_t len)
     decrypted[len] = '\0';                         // Garante terminação caso texto
 
     printf("Mensagem recebida no tópico [%s]: %s\n", topic, decrypted);
-    display_text_in_line("Msg Cript (XOR):", 1);
-    display_text_in_line(hex_string_buffer, 2);
-    display_text_in_line("Msg Descriptografada:", 3);
-    display_text_in_line(decrypted, 4); // Exibe a string hexadecimal
+    display_text_in_line("Msg Cript (XOR):", 1, 0);
+    display_text_in_line(hex_string_buffer, 2, 0);
+    display_text_in_line("Msg Descriptografada:", 3, 0);
+    display_text_in_line(decrypted, 4, 0); // Exibe a string hexadecimal
 }
 
 int main()
@@ -73,10 +96,16 @@ int main()
     // Inicializa o display
     display_init();
 
+    // Inicializa os botões
+    button_init();
+
+    // Inicializa o joystick
+    joystick_init();
+
     sleep_ms(5000);
 
     // Conecta ao Wi-Fi
-    display_text_in_line("Conectando Wi-Fi...", 1);
+    display_text_in_line("Conectando Wi-Fi...", 1, 0);
     connect_to_wifi(WIFI_SSID, WIFI_PASSWORD);
     if (!wifi_comm_is_connected())
     {
@@ -84,12 +113,12 @@ int main()
         return -1;
     }
     printf("Link da rede Wi-Fi estabelecido.\n");
-    display_text_in_line("Link estabecido!", 2);
+    display_text_in_line("Link estabecido!", 2, 0);
 
     // Inicializa e conecta ao MQTT
     mqtt_setup(MQTT_CLIENT_ID_SUBSCRIBER, MQTT_BROKER_IP, MQTT_USER, MQTT_PASS);
     sleep_ms(1000);
-    display_text_in_line("Conectando MQTT...", 1);
+    display_text_in_line("Conectando MQTT...", 1, 0);
 
     printf("Aguardando conexao MQTT (3s)...\n"); // Tempo para o cliente MQTT conectar
     sleep_ms(3000);
@@ -101,8 +130,8 @@ int main()
         return -1;
     }
     printf("Conexão MQTT estabelecida.\n");
-    display_text_in_line("MQTT Conectado!", 2);
-    display_text_in_line(MQTT_CLIENT_ID_SUBSCRIBER, 3);
+    display_text_in_line("MQTT Conectado!", 2, 0);
+    display_text_in_line(MQTT_CLIENT_ID_SUBSCRIBER, 3, 0);
     sleep_ms(2000);
 
     // Define o handler para mensagens recebidas
@@ -112,8 +141,6 @@ int main()
     mqtt_comm_subscribe(MQTT_TOPIC_SUBSCRIBE);
 
     printf("Aguardando mensagens no tópico: %s\n", MQTT_TOPIC_SUBSCRIBE);
-    display_text_in_line("Inscrito no topico:", 1);
-    display_text_in_line(MQTT_TOPIC_SUBSCRIBE, 1);
 
     // Loop principal – mantem o programa rodando
     while (1)
