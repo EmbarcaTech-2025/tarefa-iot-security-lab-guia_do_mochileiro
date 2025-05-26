@@ -11,6 +11,7 @@
 #include "joystick.h"           // Joystick handling module
 #include "mbedtls/md.h"         // Para HMAC
 #include "mbedtls/error.h"      // Para mbedtls_strerror
+#include "mbedtls/gcm.h"
 
 /**
  * @brief Enumeração dos possíveis modos de operação.
@@ -161,7 +162,7 @@ int main()
             char ts_str[21];
             snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
             display_text_in_line(ts_str, 3, 1);
-            display_text_in_line("", 4, 1); 
+            display_text_in_line("", 4, 1);
 
             // Aguarda 5 segundos antes da próxima publicação
             sleep_ms(5000);
@@ -210,7 +211,7 @@ int main()
             printf("\n");
             hex_string_buffer[2 * mensagem_len] = '\0'; // Garante terminação nula
 
-            display_text_in_line("Msg Original:", 1, 1); 
+            display_text_in_line("Msg Original:", 1, 1);
             display_text_in_line(mensagem, 2, 1);
             display_text_in_line("Msg Cript (XOR):", 3, 1);
             display_text_in_line(hex_string_buffer, 4, 1); // Exibe a string hexadecimal
@@ -253,8 +254,8 @@ int main()
                 printf("HMAC Pub Error: SHA256 not available.\n");
                 display_text_in_line("HMAC Err: SHA256", 1, 1);
                 display_text_in_line("Indisponivel", 2, 1);
-                sleep_ms(3000);           
-                current_mode = MAIN_MENU; 
+                sleep_ms(3000);
+                current_mode = MAIN_MENU;
                 first_draw_for_state = true;
                 break;
             }
@@ -323,21 +324,103 @@ int main()
             if (first_draw_for_state)
             {
                 display_text_in_line("Modo: AES-GCM", 0, 1);
-                display_text_in_line("Nao implementado", 1, 1);
-                display_text_in_line("Pressione para sair", 2, 1);
+                display_text_in_line("Enviando msg...", 1, 1);
+                display_text_in_line("", 2, 1);
                 display_text_in_line("", 3, 1);
                 display_text_in_line("", 4, 1);
                 first_draw_for_state = false;
             }
-            if (button_get_pressed_and_reset()) // Botão do joystick para sair do modo operacional
+
+            if (button_get_pressed_and_reset())
             {
                 current_mode = MAIN_MENU;
-                main_menu_selected_idx = 3; // Volta para "AES"
+                main_menu_selected_idx = 3;
                 first_draw_for_state = true;
-                break; // Sai do case AES_MODE
+                break;
             }
-            sleep_ms(100); // Keep the loop responsive
-            // }
+
+            // Prepara mensagem original
+            uint64_t timestamp_us = to_us_since_boot(get_absolute_time());
+            char mensagem_original[64];
+            snprintf(mensagem_original, sizeof(mensagem_original), "26.5,%llu", timestamp_us);
+            size_t mensagem_len = strlen(mensagem_original);
+
+            // Prepara o IV (Initialization Vector) - 12 bytes
+            // Derivado do timestamp para garantir que única por mensagem
+            uint8_t iv[AES_IV_LEN];
+            memcpy(iv, &timestamp_us, sizeof(uint64_t)); // Primeiros 8 bytes do timestamp
+            for (size_t i = sizeof(uint64_t); i < AES_IV_LEN; ++i)
+            {
+                iv[i] = (uint8_t)i; // Padding
+            }
+
+            // Prepara para criptografia
+            mbedtls_gcm_context aes_ctx;
+            mbedtls_gcm_init(&aes_ctx);
+
+            int ret = mbedtls_gcm_setkey(&aes_ctx, MBEDTLS_CIPHER_ID_AES, (const unsigned char *)AES_KEY, 256);
+            if (ret != 0)
+            {
+                printf("AES Pub Error: mbedtls_gcm_setkey falhou: -0x%04X\n", (unsigned int)-ret);
+                display_text_in_line("AES Err: SetKey", 1, 1);
+                mbedtls_gcm_free(&aes_ctx);
+                sleep_ms(3000);
+                current_mode = MAIN_MENU;
+                first_draw_for_state = true;
+                break;
+            }
+
+            uint8_t ciphertext[sizeof(mensagem_original)]; // Ciphertext vai ser do mesmo tamanho do plaintext
+            uint8_t tag[AES_TAG_LEN];
+
+            // Encripta a mensagem
+            ret = mbedtls_gcm_crypt_and_tag(&aes_ctx, MBEDTLS_GCM_ENCRYPT, mensagem_len,
+                                            iv, AES_IV_LEN,
+                                            NULL, 0,
+                                            (const unsigned char *)mensagem_original, ciphertext,
+                                            AES_TAG_LEN, tag);
+            mbedtls_gcm_free(&aes_ctx);
+
+            if (ret != 0)
+            {
+                printf("AES Pub Error: mbedtls_gcm_crypt_and_tag falhou: -0x%04X\n", (unsigned int)-ret);
+                display_text_in_line("AES Err: Encrypt", 1, 1);
+                sleep_ms(3000);
+                current_mode = MAIN_MENU;
+                first_draw_for_state = true;
+                break;
+            }
+
+            // Constroi o payload: [IV (12)] [TAG (16)] [Ciphertext (mensagem_len)]
+            uint8_t payload_to_send[AES_IV_LEN + AES_TAG_LEN + sizeof(mensagem_original)];
+            if (AES_IV_LEN + AES_TAG_LEN + mensagem_len > sizeof(payload_to_send))
+            {
+                printf("AES Pub Error: Payload buffer too small.\n");
+                display_text_in_line("AES Err: Buf", 1, 1);
+                sleep_ms(3000);
+                current_mode = MAIN_MENU;
+                first_draw_for_state = true;
+                break;
+            }
+
+            memcpy(payload_to_send, iv, AES_IV_LEN);
+            memcpy(payload_to_send + AES_IV_LEN, tag, AES_TAG_LEN);
+            memcpy(payload_to_send + AES_IV_LEN + AES_TAG_LEN, ciphertext, mensagem_len);
+            size_t total_payload_len = AES_IV_LEN + AES_TAG_LEN + mensagem_len;
+
+            // Publica
+            mqtt_comm_publish(MQTT_TOPIC_SUBSCRIBE, payload_to_send, total_payload_len);
+
+            printf("AES Pub: Original: %s\n", mensagem_original);
+            // Informações no Display
+            display_text_in_line("Msg Original (AES):", 1, 1);
+            display_text_in_line(mensagem_original, 2, 1);
+            char info_str[40];
+            snprintf(info_str, sizeof(info_str), "IV:%02x%02x.. Tag:%02x%02x..", iv[0], iv[1], tag[0], tag[1]);
+            display_text_in_line(info_str, 3, 1);
+            display_text_in_line("Cripto Enviada!", 4, 1);
+
+            sleep_ms(5000);
         }
         break;
         }

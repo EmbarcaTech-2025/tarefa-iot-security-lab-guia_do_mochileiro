@@ -22,7 +22,12 @@
 #define XOR_KEY 42
 
 // Chave secreta para HMAC
-#define HMAC_SECRET_KEY "GuiaDoMochileiroDasGalaxias"
-#define HMAC_DIGEST_SIZE 32 // SHA256 output size is 32 bytes
+#define HMAC_SECRET_KEY "DontPanicAndCarryATowelHitchhike"
+#define HMAC_DIGEST_SIZE 32 // SHA256 tamnho de output 32 bytes
+
+// Chave e IV para AES-GCM
+#define AES_KEY "MostlyHarmless42LifeUniverseEv" // 32 bytes para AES-256
+#define AES_IV_LEN 12
+#define AES_TAG_LEN 16
 
 #endif // CREDENTIALS_H
