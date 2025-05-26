@@ -34,23 +34,35 @@ project(iot_security_lab C CXX ASM)
 pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
-
-add_executable(iot_security_lab iot_security_lab.c 
-    src/mqtt_comm.c
+add_executable(publisher_firmware
+    main_publisher.c
     src/wifi_conn.c
+    src/mqtt_comm.c
     src/xor_cipher.c
 )
 
-pico_set_program_name(iot_security_lab "iot_security_lab")
-pico_set_program_version(iot_security_lab "0.1")
+add_executable(subscriber_firmware
+    main_subscriber.c
+    src/wifi_conn.c
+    src/mqtt_comm.c
+    src/xor_cipher.c
+)
+
+pico_set_program_name(publisher_firmware "iot_security_lab_publisher")
+pico_set_program_version(publisher_firmware "0.1")
+
+pico_set_program_name(subscriber_firmware "iot_security_lab_subscriber")
+pico_set_program_version(subscriber_firmware "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
-pico_enable_stdio_uart(iot_security_lab 0)
-pico_enable_stdio_usb(iot_security_lab 1)
+pico_enable_stdio_usb(publisher_firmware 1)
+pico_enable_stdio_uart(publisher_firmware 0)
 
-# Add the standard library to the build
-target_link_libraries(iot_security_lab
-        # Biblioteca padrão do Pico SDK, que fornece funções básicas para o RP2040 (GPIO, temporizadores, UART, etc.).
+pico_enable_stdio_usb(subscriber_firmware 1)
+pico_enable_stdio_uart(subscriber_firmware 0)
+
+set(LINK_LIBRARIES
+# Biblioteca padrão do Pico SDK, que fornece funções básicas para o RP2040 (GPIO, temporizadores, UART, etc.).
         pico_stdlib
         # Oferece suporte Wi-Fi (CYW43) com LwIP (pilha TCP/IP) em um modo thread-safe em segundo plano.
         pico_cyw43_arch_lwip_threadsafe_background
@@ -64,15 +76,19 @@ target_link_libraries(iot_security_lab
         # pico_unique_id
         )
 
+target_link_libraries(publisher_firmware ${LINK_LIBRARIES})
+target_link_libraries(subscriber_firmware ${LINK_LIBRARIES})
+
 # Add the standard include files to the build
-target_include_directories(iot_security_lab PRIVATE
+target_include_directories(publisher_firmware PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/include()
 )
 
-# Add any user requested libraries
-target_link_libraries(iot_security_lab 
-        
-        )
+target_include_directories(subscriber_firmware PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/include()
+)
 
-pico_add_extra_outputs(iot_security_lab)
-
+pico_add_extra_outputs(publisher_firmware)
+pico_add_extra_outputs(subscriber_firmware)

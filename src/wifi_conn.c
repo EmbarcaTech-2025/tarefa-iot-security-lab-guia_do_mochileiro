@@ -24,3 +24,11 @@ void connect_to_wifi(const char *ssid, const char *password) {
         printf("Conectado ao Wi-Fi\n");  // Se conectar com sucesso, exibe confirmação.
     }
 }
+
+/**
+ * Função: wifi_comm_is_connected
+ * Objetivo: Verificar se o chip Wi-Fi está conectado a uma rede.
+ */
+int wifi_comm_is_connected() {
+    return (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP);    
+}
