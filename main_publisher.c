@@ -10,6 +10,7 @@
 #include "button.h"             // Button handling module
 #include "joystick.h"           // Joystick handling module
 #include "mbedtls/md.h"         // Para HMAC
+#include "mbedtls/error.h"      // Para mbedtls_strerror
 
 /**
  * @brief Enumeração dos possíveis modos de operação.
@@ -122,7 +123,7 @@ int main()
 
                 if (previous_op_mode == MAIN_MENU && current_mode != MAIN_MENU)
                 {
-                    display_clear(); // Clear menu before showing mode screen
+                    display_clear(); // Limpa o display ao entrar em um novo modo
                 }
                 first_draw_for_state = true; // Força redesenho do novo estado
             }
@@ -131,7 +132,6 @@ int main()
         {
             if (first_draw_for_state)
             {
-                // display_clear(); // Already cleared if coming from MAIN_MENU
                 display_text_in_line("Modo: Sem Seguranca", 0, 1);
                 display_text_in_line("Enviando msg...", 1, 1);
                 display_text_in_line("", 2, 1);
@@ -140,8 +140,6 @@ int main()
                 first_draw_for_state = false;
             }
             // Loop principal do programa
-            // while (true) // This inner while(true) is part of the original structure
-            // { // The following code will run, then sleep, then repeat
             if (button_get_pressed_and_reset()) // Botão do joystick para sair do modo operacional
             {
                 current_mode = MAIN_MENU;
@@ -158,24 +156,21 @@ int main()
             // Publica a mensagem original (não criptografada)
             mqtt_comm_publish(MQTT_TOPIC_SUBSCRIBE, (uint8_t *)mensagem, strlen(mensagem));
 
-            // Update display lines for dynamic content
-            display_text_in_line("Msg Enviada:", 1, 1); // Overwrites "Enviando msg..."
+            display_text_in_line("Msg Enviada:", 1, 1);
             display_text_in_line(mensagem, 2, 1);
             char ts_str[21];
             snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
             display_text_in_line(ts_str, 3, 1);
-            display_text_in_line("", 4, 1); // Clear last line if needed
+            display_text_in_line("", 4, 1); 
 
             // Aguarda 5 segundos antes da próxima publicação
             sleep_ms(5000);
-            // } // End of inner while(true)
         }
         break;
         case XOR_MODE:
         {
             if (first_draw_for_state)
             {
-                // display_clear(); // Already cleared if coming from MAIN_MENU
                 display_text_in_line("Modo: Encriptacao XOR", 0, 1);
                 display_text_in_line("Enviando msg...", 1, 1);
                 display_text_in_line("", 2, 1);
@@ -183,8 +178,6 @@ int main()
                 display_text_in_line("", 4, 1);
                 first_draw_for_state = false;
             }
-            // while (true) // This inner while(true) is part of the original structure
-            // { // The following code will run, then sleep, then repeat
             if (button_get_pressed_and_reset()) // Botão do joystick para sair do modo operacional
             {
                 current_mode = MAIN_MENU;
@@ -203,7 +196,7 @@ int main()
             hex_string_buffer[0] = '\0'; // Inicializa o buffer como string vazia
 
             // Publica a mensagem criptografada
-            uint8_t criptografada[64]; // Ensure buffer is large enough
+            uint8_t criptografada[64]; // Garante que o  buffer é suficiente para a mensagem criptografada
             xor_encrypt((uint8_t *)mensagem, criptografada, mensagem_len, XOR_KEY);
 
             mqtt_comm_publish(MQTT_TOPIC_SUBSCRIBE, criptografada, mensagem_len);
@@ -217,46 +210,118 @@ int main()
             printf("\n");
             hex_string_buffer[2 * mensagem_len] = '\0'; // Garante terminação nula
 
-            display_text_in_line("Msg Original:", 1, 1); // Overwrites "Enviando msg..."
+            display_text_in_line("Msg Original:", 1, 1); 
             display_text_in_line(mensagem, 2, 1);
             display_text_in_line("Msg Cript (XOR):", 3, 1);
             display_text_in_line(hex_string_buffer, 4, 1); // Exibe a string hexadecimal
 
             // Aguarda 5 segundos antes da próxima publicação
             sleep_ms(5000);
-            // } // End of inner while(true)
         }
         break;
         case HMAC_MODE:
         {
             if (first_draw_for_state)
             {
-                // display_clear(); // Already cleared if coming from MAIN_MENU
-                display_text_in_line("Modo: HMAC", 0, 1);
-                display_text_in_line("Nao implementado", 1, 1);
-                display_text_in_line("Pressione para sair", 2, 1);
+                display_text_in_line("Modo: Autent. HMAC", 0, 1);
+                display_text_in_line("Enviando msg...", 1, 1);
+                display_text_in_line("", 2, 1);
                 display_text_in_line("", 3, 1);
                 display_text_in_line("", 4, 1);
                 first_draw_for_state = false;
             }
-            // while (true) // This inner while(true) is part of the original structure
-            // {
-            if (button_get_pressed_and_reset()) // Botão do joystick para sair do modo operacional
+
+            if (button_get_pressed_and_reset())
             {
                 current_mode = MAIN_MENU;
-                main_menu_selected_idx = 2; // Volta para "HMAC"
+                main_menu_selected_idx = 2;
                 first_draw_for_state = true;
-                break; // Sai do case HMAC_MODE
+                break;
             }
-            sleep_ms(100); // Keep the loop responsive
-            // }
+
+            // Mensagem com timestamp
+            uint64_t timestamp = to_us_since_boot(get_absolute_time());
+            char mensagem_original[64];
+            snprintf(mensagem_original, sizeof(mensagem_original), "26.5,%llu", timestamp);
+            size_t mensagem_original_len = strlen(mensagem_original);
+
+            uint8_t hmac_result[HMAC_DIGEST_SIZE];
+            const mbedtls_md_info_t *md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+
+            if (md_info == NULL)
+            {
+                printf("HMAC Pub Error: SHA256 not available.\n");
+                display_text_in_line("HMAC Err: SHA256", 1, 1);
+                display_text_in_line("Indisponivel", 2, 1);
+                sleep_ms(3000);           
+                current_mode = MAIN_MENU; 
+                first_draw_for_state = true;
+                break;
+            }
+
+            int ret = mbedtls_md_hmac(md_info,
+                                      (const unsigned char *)HMAC_SECRET_KEY, strlen(HMAC_SECRET_KEY),
+                                      (const unsigned char *)mensagem_original, mensagem_original_len,
+                                      hmac_result);
+
+            if (ret != 0)
+            {
+                char error_buf[100];
+                mbedtls_strerror(ret, error_buf, sizeof(error_buf));
+                printf("HMAC Pub Error: mbedtls_md_hmac falhou: -0x%04X - %s\n", (unsigned int)-ret, error_buf);
+                display_text_in_line("HMAC Err: Calc", 1, 1);
+                snprintf(error_buf, sizeof(error_buf), "Code: -0x%04X", (unsigned int)-ret);
+                display_text_in_line(error_buf, 2, 1);
+                sleep_ms(3000);
+                current_mode = MAIN_MENU;
+                first_draw_for_state = true;
+                break;
+            }
+
+            uint8_t payload_to_send[HMAC_DIGEST_SIZE + sizeof(mensagem_original)]; // Ensure enough space
+            if (HMAC_DIGEST_SIZE + mensagem_original_len > sizeof(payload_to_send))
+            {
+                printf("HMAC Pub Error: Payload buffer muito pequeno.\n");
+                display_text_in_line("HMAC Err: Buf", 1, 1);
+                sleep_ms(3000);
+                current_mode = MAIN_MENU;
+                first_draw_for_state = true;
+                break;
+            }
+
+            memcpy(payload_to_send, hmac_result, HMAC_DIGEST_SIZE);
+            memcpy(payload_to_send + HMAC_DIGEST_SIZE, mensagem_original, mensagem_original_len);
+
+            size_t total_payload_len = HMAC_DIGEST_SIZE + mensagem_original_len;
+
+            mqtt_comm_publish(MQTT_TOPIC_SUBSCRIBE, payload_to_send, total_payload_len);
+
+            printf("HMAC Pub: Original: %s\n", mensagem_original);
+            printf("HMAC Pub: HMAC (hex): ");
+            char hmac_hex_display_full[HMAC_DIGEST_SIZE * 2 + 1];
+            for (int i = 0; i < HMAC_DIGEST_SIZE; i++)
+            {
+                sprintf(hmac_hex_display_full + i * 2, "%02x", hmac_result[i]);
+            }
+            hmac_hex_display_full[HMAC_DIGEST_SIZE * 2] = '\0';
+            printf("%s\n", hmac_hex_display_full);
+
+            display_text_in_line("Msg Original (HMAC):", 1, 1);
+            display_text_in_line(mensagem_original, 2, 1);
+
+            char hmac_short_display[20];
+            snprintf(hmac_short_display, sizeof(hmac_short_display), "HMAC: %02x%02x%02x%02x...",
+                     hmac_result[0], hmac_result[1], hmac_result[2], hmac_result[3]);
+            display_text_in_line(hmac_short_display, 3, 1);
+            display_text_in_line("Enviado!", 4, 1);
+
+            sleep_ms(5000);
         }
         break;
         case AES_MODE:
         {
             if (first_draw_for_state)
             {
-                // display_clear(); // Already cleared if coming from MAIN_MENU
                 display_text_in_line("Modo: AES-GCM", 0, 1);
                 display_text_in_line("Nao implementado", 1, 1);
                 display_text_in_line("Pressione para sair", 2, 1);
@@ -264,8 +329,6 @@ int main()
                 display_text_in_line("", 4, 1);
                 first_draw_for_state = false;
             }
-            // while (true) // This inner while(true) is part of the original structure
-            // {
             if (button_get_pressed_and_reset()) // Botão do joystick para sair do modo operacional
             {
                 current_mode = MAIN_MENU;

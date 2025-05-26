@@ -7,9 +7,10 @@
 #include "mqtt_comm.h"          // Funções personalizadas para MQTT
 #include "xor_cipher.h"         // Funções de cifra XOR
 #include "display.h"
-#include "button.h"     // Button handling module
-#include "joystick.h"   // Joystick handling module
-#include "mbedtls/md.h" // Para HMAC
+#include "button.h"        // Button handling module
+#include "joystick.h"      // Joystick handling module
+#include "mbedtls/md.h"    // Para HMAC
+#include "mbedtls/error.h" // Para mbedtls_strerror
 
 /**
  * @brief Enumeração dos possíveis modos de operação.
@@ -37,7 +38,7 @@ uint8_t decrypted_buffer[PAYLOAD_MAX_LEN];
 
 static uint64_t global_last_timestamp = 0;
 
-// Forward declarations for mode-specific message handlers
+// Forward declartion para os handlers de mensagens específicos de cada modo
 void on_message_normal_mode(const char *topic, const uint8_t *payload, size_t len);
 void on_message_xor_mode(const char *topic, const uint8_t *payload, size_t len);
 void on_message_hmac_mode(const char *topic, const uint8_t *payload, size_t len);
@@ -80,7 +81,7 @@ void on_message_normal_mode(const char *topic, const uint8_t *payload, size_t le
     }
 }
 
-// Handler for XOR_MODE
+// Handler para XOR_MODE
 void on_message_xor_mode(const char *topic, const uint8_t *payload, size_t len)
 {
     char valor[32] = {0};
@@ -125,20 +126,109 @@ void on_message_xor_mode(const char *topic, const uint8_t *payload, size_t len)
     }
 }
 
-// Placeholder for HMAC_MODE
+// Handler para HMAC_MODE
 void on_message_hmac_mode(const char *topic, const uint8_t *payload, size_t len)
 {
-    printf("[HMAC] Mensagem recebida. Lógica de HMAC não implementada.\n");
-    display_text_in_line("Msg HMAC (NI)", 1, 0);
-    char len_str[16];
-    snprintf(len_str, sizeof(len_str), "Len: %u", len);
-    display_text_in_line(len_str, 2, 0);
-    display_text_in_line("", 3, 0);
-    display_text_in_line("", 4, 0);
-    // Implement HMAC verification and replay detection here
+    if (len < HMAC_DIGEST_SIZE)
+    {
+        printf("[HMAC Sub] Payload muito curto. Len: %u, Esperado min: %d\n", len, HMAC_DIGEST_SIZE);
+        display_text_in_line("HMAC Err: Curto", 1, 0);
+        char len_str[20];
+        snprintf(len_str, sizeof(len_str), "Len: %u", len);
+        display_text_in_line(len_str, 2, 0);
+        return;
+    }
+
+    const uint8_t *received_hmac = payload;
+    const uint8_t *message_data_ptr = payload + HMAC_DIGEST_SIZE;
+    size_t message_data_len = len - HMAC_DIGEST_SIZE;
+
+    // Buffer for the message string part, ensure null termination for sscanf
+    char extracted_message_str[PAYLOAD_MAX_LEN]; // Use a generous buffer
+    if (message_data_len >= sizeof(extracted_message_str))
+    {
+        printf("[HMAC Sub] Parte da mensagem do payload muito longa. Len: %u\n", message_data_len);
+        display_text_in_line("HMAC Err: MsgLng", 1, 0);
+        return;
+    }
+    memcpy(extracted_message_str, message_data_ptr, message_data_len);
+    extracted_message_str[message_data_len] = '\0'; // Null-terminate
+
+    uint8_t calculated_hmac[HMAC_DIGEST_SIZE];
+    const mbedtls_md_info_t *md_info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+
+    if (md_info == NULL)
+    {
+        printf("[HMAC Sub] Error: SHA256 não disponível.\n");
+        display_text_in_line("HMAC Err: SHA256", 1, 0);
+        display_text_in_line("Indisponivel", 2, 0);
+        return;
+    }
+
+    int ret = mbedtls_md_hmac(md_info,
+                              (const unsigned char *)HMAC_SECRET_KEY, strlen(HMAC_SECRET_KEY),
+                              message_data_ptr, message_data_len, // Use pointer and actual length
+                              calculated_hmac);
+
+    if (ret != 0)
+    {
+        char error_buf[100];
+        mbedtls_strerror(ret, error_buf, sizeof(error_buf));
+        printf("[HMAC Sub] Error: Falha de calculo mbedtls_md_hmac: -0x%04X - %s\n", (unsigned int)-ret, error_buf);
+        display_text_in_line("HMAC Err: Calc", 1, 0);
+        snprintf(error_buf, sizeof(error_buf), "Code: -0x%04X", (unsigned int)-ret);
+        display_text_in_line(error_buf, 2, 0);
+        return;
+    }
+
+    char valor[32] = {0};
+    uint64_t timestamp = 0;
+    // Ensure sscanf does not read past the actual message data by using the null-terminated string
+    sscanf(extracted_message_str, "%31[^,],%llu", valor, &timestamp);
+
+    if (memcmp(received_hmac, calculated_hmac, HMAC_DIGEST_SIZE) == 0)
+    {
+        if (timestamp > global_last_timestamp)
+        {
+            global_last_timestamp = timestamp;
+            printf("[HMAC Sub] Mensagem AUTENTICADA e NOVA: msg='%s', ts=%llu\n", extracted_message_str, timestamp);
+
+            display_text_in_line("Msg Autenticada:", 1, 0);
+            display_text_in_line(extracted_message_str, 2, 0);
+            char ts_str[21];
+            snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
+            display_text_in_line(ts_str, 3, 0);
+            char hmac_ok_disp[20];
+            sprintf(hmac_ok_disp, "HMAC OK: %02x%02x..", received_hmac[0], received_hmac[1]);
+            display_text_in_line(hmac_ok_disp, 4, 0);
+        }
+        else
+        {
+            printf("[HMAC Sub] Replay detectado! Msg: '%s', ts=%llu. HMAC era válido.\n", extracted_message_str, timestamp);
+            display_text_in_line("Replay Detectado!", 1, 0);
+            display_text_in_line(extracted_message_str, 2, 0);
+            char ts_str[21];
+            snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
+            display_text_in_line(ts_str, 3, 0);
+            display_text_in_line("(HMAC OK)", 4, 0);
+        }
+    }
+    else
+    {
+        printf("[HMAC Sub] Falha na verificação do HMAC! Msg: '%s', ts=%llu\n", extracted_message_str, timestamp);
+
+        display_text_in_line("Falha HMAC!", 1, 0);
+        display_text_in_line(extracted_message_str, 2, 0);
+        char ts_str[21];
+        snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
+        display_text_in_line(ts_str, 3, 0);
+        char hmac_fail_disp[20];
+        sprintf(hmac_fail_disp, "Rec: %02x%02x Calc:%02x%02x", received_hmac[0], received_hmac[1], calculated_hmac[0], calculated_hmac[1]);
+        display_text_in_line(hmac_fail_disp, 4, 0);
+    }
 }
 
-// Placeholder for AES_MODE
+// Placeholder para AES_MODE
 void on_message_aes_mode(const char *topic, const uint8_t *payload, size_t len)
 {
     printf("[AES] Mensagem recebida. Lógica de AES não implementada.\n");
@@ -148,7 +238,7 @@ void on_message_aes_mode(const char *topic, const uint8_t *payload, size_t len)
     display_text_in_line(len_str, 2, 0);
     display_text_in_line("", 3, 0);
     display_text_in_line("", 4, 0);
-    // Implement AES decryption and replay detection here
+    // TODO
 }
 
 int main()
@@ -210,7 +300,6 @@ int main()
         case MAIN_MENU:
             if (first_draw_for_state)
             {
-                // Consider display_clear() here if menu should always redraw on clean screen
                 draw_menu("SUBSCRIBER", main_menu_items, main_menu_count, main_menu_selected_idx);
                 first_draw_for_state = false;
             }
@@ -249,7 +338,7 @@ int main()
 
                 if (previous_op_mode == MAIN_MENU && current_mode != MAIN_MENU)
                 {
-                    display_clear(); // Clear menu before showing mode screen
+                    display_clear(); 
                 }
                 first_draw_for_state = true;
             }
@@ -271,9 +360,7 @@ int main()
                 current_mode = MAIN_MENU;
                 main_menu_selected_idx = 0;
                 first_draw_for_state = true;
-                // No break here, outer loop handles switch to MAIN_MENU on next iteration
             }
-            // MQTT messages handled by callback. Add other mode-specific periodic tasks if any.
             sleep_ms(100);
         }
         break;
@@ -303,9 +390,9 @@ int main()
             if (first_draw_for_state)
             {
                 display_clear();
-                display_text_in_line("Modo: HMAC", 0, 0);
-                display_text_in_line("Nao implementado", 1, 0);
-                display_text_in_line("Aguardando msg...", 2, 0);
+                display_text_in_line("Modo: Autent. HMAC", 0, 0);
+                display_text_in_line("Aguardando msg...", 1, 0);
+                display_text_in_line("", 2, 0);
                 display_text_in_line("", 3, 0);
                 display_text_in_line("", 4, 0);
                 first_draw_for_state = false;
