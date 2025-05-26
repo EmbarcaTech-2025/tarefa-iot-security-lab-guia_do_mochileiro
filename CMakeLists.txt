@@ -39,6 +39,8 @@ add_executable(publisher_firmware
     src/wifi_conn.c
     src/mqtt_comm.c
     src/xor_cipher.c
+    src/ssd1306.c
+    src/display.c
 )
 
 add_executable(subscriber_firmware
@@ -46,6 +48,8 @@ add_executable(subscriber_firmware
     src/wifi_conn.c
     src/mqtt_comm.c
     src/xor_cipher.c
+    src/ssd1306.c
+    src/display.c
 )
 
 pico_set_program_name(publisher_firmware "iot_security_lab_publisher")
@@ -72,8 +76,8 @@ set(LINK_LIBRARIES
         pico_lwip
         # O driver do chip Wi-Fi CYW43 (usado no Pico W).
         pico_cyw43_driver
-        # pico_time
-        # pico_unique_id
+        # i2c hardware driver, que permite comunicação com dispositivos I2C.        
+        hardware_i2c
         )
 
 target_link_libraries(publisher_firmware ${LINK_LIBRARIES})

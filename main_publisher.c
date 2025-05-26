@@ -7,18 +7,22 @@
 #include "mqtt_comm.h"          // Funções personalizadas para MQTT
 #include "xor_cipher.h"         // Funções de cifra XOR
 #include "pico/time.h"
-
+#include "display.h"            // Funções de exibição no display SSD1306
 
 int main()
 {
     // Inicializa todas as interfaces de I/O padrão (USB serial, etc.)
     stdio_init_all();
 
+    // Inicializa o display
+    display_init();
+
     // Aguarda inicialização do terminal serial
     sleep_ms(5000);
 
     // Conecta à rede WiFi
     // Parâmetros em credentials.h
+    display_text_in_line("Conectando Wi-Fi...", 1);
     connect_to_wifi(WIFI_SSID, WIFI_PASSWORD);
 
     // Testa o link da conexão Wi-Fi
@@ -28,13 +32,16 @@ int main()
         return -1;
     }
     printf("Link da rede Wi-Fi estabelecido.\n");
+    display_text_in_line("Link estabecido!", 2);
 
     // Configura o cliente MQTT
     // Parâmetros em credentials.h
-    mqtt_setup(MQTT_CLIENT_ID_PUBLISHER, MQTT_BROKER_IP, MQTT_USER, MQTT_PASS);    
+    mqtt_setup(MQTT_CLIENT_ID_PUBLISHER, MQTT_BROKER_IP, MQTT_USER, MQTT_PASS);
+    sleep_ms(1000);
+    display_text_in_line("Conectando MQTT...", 1);
 
-    printf("Aguardando conexao MQTT (2s)...\n"); // Tempo para o cliente MQTT conectar
-    sleep_ms(2000);
+    printf("Aguardando conexao MQTT (3s)...\n"); // Tempo para o cliente MQTT conectar
+    sleep_ms(3000);
 
     // Verifica se a conexão MQTT foi estabelecida
     if (!mqtt_comm_is_connected())
@@ -43,13 +50,9 @@ int main()
         return -1;
     }
     printf("Conexão MQTT estabelecida.\n");
-
-    // Mensagem original a ser enviada
-    //const char *mensagem = "26.5";
-    // Buffer para mensagem criptografada (16 bytes)
-    //uint8_t criptografada[16];
-    // Criptografa a mensagem usando XOR com chave 42
-    //xor_encrypt((uint8_t *)mensagem, criptografada, strlen(mensagem), XOR_KEY);
+    display_text_in_line("MQTT Conectado!", 2);
+    display_text_in_line(MQTT_CLIENT_ID_PUBLISHER, 3);
+    sleep_ms(2000);
 
     // Loop principal do programa
     while (true)
@@ -61,21 +64,29 @@ int main()
         snprintf(mensagem, sizeof(mensagem), "26.5,%llu", timestamp);
 
         // Publica a mensagem original (não criptografada)
-        //mqtt_comm_publish(MQTT_TOPIC_SUBSCRIBE, mensagem, strlen(mensagem));
+        // mqtt_comm_publish(MQTT_TOPIC_SUBSCRIBE, mensagem, strlen(mensagem));
+
+        char hex_string_buffer[2 * strlen(mensagem) + 1];
+        hex_string_buffer[0] = '\0'; // Inicializa o buffer como string vazia
 
         // Alternativa: Publica a mensagem criptografada
-
         uint8_t criptografada[64];
         xor_encrypt((uint8_t *)mensagem, criptografada, strlen(mensagem), XOR_KEY);
 
         mqtt_comm_publish(MQTT_TOPIC_SUBSCRIBE, criptografada, strlen(mensagem));
         printf("Mensagem original: %s\n", mensagem);
         printf("Mensagem criptografada (hex): ");
-        for (size_t i = 0; i < strlen(mensagem); ++i) {
+        for (size_t i = 0; i < strlen(mensagem); ++i)
+        {
             printf("%02x", criptografada[i]);
+            sprintf(hex_string_buffer + (i * 2), "%02x", criptografada[i]);
         }
         printf("\n");
-
+        hex_string_buffer[2 * strlen(mensagem)] = '\0'; // Garante terminação nula
+        display_text_in_line("Msg Original:", 1);
+        display_text_in_line(mensagem, 2);
+        display_text_in_line("Msg Cript (XOR):", 3);
+        display_text_in_line(hex_string_buffer, 4); // Exibe a string hexadecimal
 
         // Aguarda 5 segundos antes da próxima publicação
         sleep_ms(5000);
