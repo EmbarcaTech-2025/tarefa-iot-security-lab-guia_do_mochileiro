@@ -11,6 +11,7 @@
 #include "joystick.h"      // Joystick handling module
 #include "mbedtls/md.h"    // Para HMAC
 #include "mbedtls/error.h" // Para mbedtls_strerror
+#include "mbedtls/gcm.h"
 
 /**
  * @brief Enumeração dos possíveis modos de operação.
@@ -228,17 +229,110 @@ void on_message_hmac_mode(const char *topic, const uint8_t *payload, size_t len)
     }
 }
 
-// Placeholder para AES_MODE
+// Handler para AES_MODE
 void on_message_aes_mode(const char *topic, const uint8_t *payload, size_t len)
 {
-    printf("[AES] Mensagem recebida. Lógica de AES não implementada.\n");
-    display_text_in_line("Msg AES (NI)", 1, 0);
-    char len_str[16];
-    snprintf(len_str, sizeof(len_str), "Len: %u", len);
-    display_text_in_line(len_str, 2, 0);
-    display_text_in_line("", 3, 0);
-    display_text_in_line("", 4, 0);
-    // TODO
+    if (len < (AES_IV_LEN + AES_TAG_LEN))
+    {
+        printf("[AES Sub] Payload muito curto. Len: %u, Esperado min: %d\n", len, AES_IV_LEN + AES_TAG_LEN);
+        display_text_in_line("AES Err: Curto", 1, 0);
+        char len_str[20];
+        snprintf(len_str, sizeof(len_str), "Len: %u", len);
+        display_text_in_line(len_str, 2, 0);
+        return;
+    }
+
+    // Extraí IV, Tag, e Ciphertext do payload
+    const uint8_t *iv_received = payload;
+    const uint8_t *tag_received = payload + AES_IV_LEN;
+    const uint8_t *ciphertext_received = payload + AES_IV_LEN + AES_TAG_LEN;
+    size_t ciphertext_len = len - (AES_IV_LEN + AES_TAG_LEN);
+
+    if (ciphertext_len == 0)
+    {
+        printf("[AES Sub] Ciphertext has zero length.\n");
+        display_text_in_line("AES Err: NoCipher", 1, 0);
+        return;
+    }
+    if (ciphertext_len >= PAYLOAD_MAX_LEN)
+    {
+        printf("[AES Sub] Ciphertext muito grande para decrypted_buffer. Len: %u\n", ciphertext_len);
+        display_text_in_line("AES Err: CipherLng", 1, 0);
+        return;
+    }
+
+    // Prepara para descriptografar
+    mbedtls_gcm_context aes_ctx;
+    mbedtls_gcm_init(&aes_ctx);
+
+    int ret = mbedtls_gcm_setkey(&aes_ctx, MBEDTLS_CIPHER_ID_AES, (const unsigned char *)AES_KEY, 256);
+    if (ret != 0)
+    {
+        printf("[AES Sub] Error: mbedtls_gcm_setkey failed: -0x%04X\n", (unsigned int)-ret);
+        display_text_in_line("AES Err: SetKey", 1, 0);
+        mbedtls_gcm_free(&aes_ctx);
+        return;
+    }
+
+    // Descriptografa e autentica a mensagem
+    ret = mbedtls_gcm_auth_decrypt(&aes_ctx, ciphertext_len,
+                                   iv_received, AES_IV_LEN,
+                                   NULL, 0,
+                                   tag_received, AES_TAG_LEN,
+                                   ciphertext_received, decrypted_buffer);
+    mbedtls_gcm_free(&aes_ctx);
+
+    if (ret == MBEDTLS_ERR_GCM_AUTH_FAILED)
+    {
+        printf("[AES Sub] Falha na autenticação (tag mismatch)!\n");
+        display_text_in_line("AES Falha Auth!", 1, 0);
+        char info_str[40];
+        snprintf(info_str, sizeof(info_str), "IV:%02x.. Tag:%02x..", iv_received[0], tag_received[0]);
+        display_text_in_line(info_str, 2, 0);
+        display_text_in_line("Tag Invalida", 3, 0);
+        return;
+    }
+    else if (ret != 0)
+    {
+        printf("[AES Sub] Falha na descriptografia: -0x%04X\n", (unsigned int)-ret);
+        display_text_in_line("AES Err: Decrypt", 1, 0);
+        char err_code_str[20];
+        snprintf(err_code_str, sizeof(err_code_str), "Code: -0x%04X", (unsigned int)-ret);
+        display_text_in_line(err_code_str, 2, 0);
+        return;
+    }
+
+    decrypted_buffer[ciphertext_len] = '\0';
+
+    // Parseia a mensagem descriptografada e checa timestamp
+    char valor[32] = {0};
+    uint64_t timestamp = 0;
+    sscanf((char *)decrypted_buffer, "%31[^,],%llu", valor, &timestamp);
+
+    if (timestamp > global_last_timestamp)
+    {
+        global_last_timestamp = timestamp;
+        printf("[AES Sub] Mensagem DESCRIPTOGRAFADA, AUTENTICADA e NOVA: msg='%s', ts=%llu\n", (char *)decrypted_buffer, timestamp);
+
+        display_text_in_line("Msg AES OK:", 1, 0);
+        display_text_in_line((char *)decrypted_buffer, 2, 0);
+        char ts_str[21];
+        snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
+        display_text_in_line(ts_str, 3, 0);
+        char info_disp[20];
+        sprintf(info_disp, "IV:%02x Tag OK", iv_received[0]);
+        display_text_in_line(info_disp, 4, 0);
+    }
+    else
+    {
+        printf("[AES Sub] Replay detectado! Msg: '%s', ts=%llu. AES era válido.\n", (char *)decrypted_buffer, timestamp);
+        display_text_in_line("Replay Detectado!", 1, 0);
+        display_text_in_line((char *)decrypted_buffer, 2, 0);
+        char ts_str[21];
+        snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
+        display_text_in_line(ts_str, 3, 0);
+        display_text_in_line("(AES OK)", 4, 0);
+    }
 }
 
 int main()
@@ -338,7 +432,7 @@ int main()
 
                 if (previous_op_mode == MAIN_MENU && current_mode != MAIN_MENU)
                 {
-                    display_clear(); 
+                    display_clear();
                 }
                 first_draw_for_state = true;
             }
@@ -412,8 +506,8 @@ int main()
             {
                 display_clear();
                 display_text_in_line("Modo: AES-GCM", 0, 0);
-                display_text_in_line("Nao implementado", 1, 0);
-                display_text_in_line("Aguardando msg...", 2, 0);
+                display_text_in_line("Aguardando msg...", 1, 0);
+                display_text_in_line("", 2, 0);
                 display_text_in_line("", 3, 0);
                 display_text_in_line("", 4, 0);
                 first_draw_for_state = false;
