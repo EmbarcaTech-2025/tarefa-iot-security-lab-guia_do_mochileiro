@@ -33,60 +33,122 @@ static volatile uint32_t last_btn_press_time = 0;
 
 // Buffer para descriptografia
 #define PAYLOAD_MAX_LEN 256
-uint8_t decrypted[PAYLOAD_MAX_LEN];
+uint8_t decrypted_buffer[PAYLOAD_MAX_LEN];
 
-static uint64_t last_timestamp = 0;
+static uint64_t global_last_timestamp = 0;
 
-// Função handler que será chamada ao receber mensagem MQTT
-void on_message(const char *topic, const uint8_t *payload, size_t len)
+// Forward declarations for mode-specific message handlers
+void on_message_normal_mode(const char *topic, const uint8_t *payload, size_t len);
+void on_message_xor_mode(const char *topic, const uint8_t *payload, size_t len);
+void on_message_hmac_mode(const char *topic, const uint8_t *payload, size_t len);
+void on_message_aes_mode(const char *topic, const uint8_t *payload, size_t len);
+
+// Handler para o NORMAL_MODE (Sem segurança)
+void on_message_normal_mode(const char *topic, const uint8_t *payload, size_t len)
 {
-
-    // Espera payload no formato "valor,timestamp"
-    char valor[32];
+    char valor[32] = {0};
     uint64_t timestamp = 0;
-    // sscanf((char *)decrypted, "%31[^,],%llu", valor, &timestamp);
+    char mensagem[PAYLOAD_MAX_LEN];
 
-    // sem criptografia:
-    char mensagem[64];
-    memcpy(mensagem, payload, len);
-    mensagem[len] = '\0';
+    size_t copy_len = len < (PAYLOAD_MAX_LEN - 1) ? len : (PAYLOAD_MAX_LEN - 1);
+    memcpy(mensagem, payload, copy_len);
+    mensagem[copy_len] = '\0';
 
-    char hex_string_buffer[2 * strlen(payload) + 1];
-    hex_string_buffer[0] = '\0'; // Inicializa o buffer como string vazia
-
-    // Espera formato "valor,timestamp"
     sscanf(mensagem, "%31[^,],%llu", valor, &timestamp);
 
-    static uint64_t last_timestamp = 0;
-    if (timestamp > last_timestamp)
+    if (timestamp > global_last_timestamp)
     {
-        printf("Mensagem NOVA recebida: valor=%s, timestamp=%llu\n", valor, timestamp);
-        last_timestamp = timestamp;
+        printf("[NORMAL] Mensagem NOVA recebida: valor=%s, timestamp=%llu\n", valor, timestamp);
+        global_last_timestamp = timestamp;
+
+        display_text_in_line("Msg Recebida:", 1, 0);
+        display_text_in_line(mensagem, 2, 0);
+        char ts_str[21];
+        snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
+        display_text_in_line(ts_str, 3, 0);
+        display_text_in_line("", 4, 0); // Clear last line
     }
     else
     {
-        printf("Replay detectado! Ignorando mensagem: valor=%s, timestamp=%llu\n", valor, timestamp);
+        printf("[NORMAL] Replay detectado! Ignorando mensagem: valor=%s, timestamp=%llu\n", valor, timestamp);
+        display_text_in_line("Replay Detectado!", 1, 0);
+        display_text_in_line(valor, 2, 0);
+        char ts_str[21];
+        snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
+        display_text_in_line(ts_str, 3, 0);
+        display_text_in_line("(Normal)", 4, 0);
     }
+}
 
-    printf("Mensagem criptografada recebida no tópico [%s] (hex): ", topic);
-    for (size_t i = 0; i < len; ++i)
+// Handler for XOR_MODE
+void on_message_xor_mode(const char *topic, const uint8_t *payload, size_t len)
+{
+    char valor[32] = {0};
+    uint64_t timestamp = 0;
+
+    size_t process_len = len < PAYLOAD_MAX_LEN ? len : (PAYLOAD_MAX_LEN - 1);
+    xor_encrypt(payload, decrypted_buffer, process_len, XOR_KEY);
+    decrypted_buffer[process_len] = '\0';
+
+    sscanf((char *)decrypted_buffer, "%31[^,],%llu", valor, &timestamp);
+
+    if (timestamp > global_last_timestamp)
     {
-        printf("%02x", payload[i]);
-        sprintf(hex_string_buffer + (i * 2), "%02x", payload[i]);
+        printf("[XOR] Mensagem NOVA (descriptografada): valor=%s, timestamp=%llu\n", valor, timestamp);
+        global_last_timestamp = timestamp;
+
+        char hex_string_buffer[2 * process_len + 1];
+        for (size_t i = 0; i < process_len; ++i)
+        {
+            sprintf(hex_string_buffer + (i * 2), "%02x", payload[i]);
+        }
+        // sprintf null-terminates, but to be safe:
+        hex_string_buffer[2 * process_len] = '\0';
+
+        printf("Mensagem criptografada (hex): %s\n", hex_string_buffer);
+        printf("Mensagem descriptografada: %s\n", decrypted_buffer);
+
+        display_text_in_line("Msg Cript (XOR):", 1, 0);
+        display_text_in_line(hex_string_buffer, 2, 0);
+        display_text_in_line("Msg Descriptografada:", 3, 0);
+        display_text_in_line((char *)decrypted_buffer, 4, 0);
     }
-    hex_string_buffer[2 * strlen(payload)] = '\0'; // Garante terminação da string hexadecimal
-    printf("\n");
+    else
+    {
+        printf("[XOR] Replay detectado! Ignorando (descriptografada): valor=%s, timestamp=%llu\n", valor, timestamp);
+        display_text_in_line("Replay Detectado!", 1, 0);
+        display_text_in_line(valor, 2, 0);
+        char ts_str[21];
+        snprintf(ts_str, sizeof(ts_str), "TS: %llu", timestamp);
+        display_text_in_line(ts_str, 3, 0);
+        display_text_in_line("(XOR)", 4, 0);
+    }
+}
 
-    // Descriptografa
-    memcpy(decrypted, payload, len);
-    xor_encrypt(payload, decrypted, len, XOR_KEY); // XOR_KEY deve ser definido em xor_encrypt.h ou credentials.h
-    decrypted[len] = '\0';                         // Garante terminação caso texto
+// Placeholder for HMAC_MODE
+void on_message_hmac_mode(const char *topic, const uint8_t *payload, size_t len)
+{
+    printf("[HMAC] Mensagem recebida. Lógica de HMAC não implementada.\n");
+    display_text_in_line("Msg HMAC (NI)", 1, 0);
+    char len_str[16];
+    snprintf(len_str, sizeof(len_str), "Len: %u", len);
+    display_text_in_line(len_str, 2, 0);
+    display_text_in_line("", 3, 0);
+    display_text_in_line("", 4, 0);
+    // Implement HMAC verification and replay detection here
+}
 
-    printf("Mensagem recebida no tópico [%s]: %s\n", topic, decrypted);
-    display_text_in_line("Msg Cript (XOR):", 1, 0);
-    display_text_in_line(hex_string_buffer, 2, 0);
-    display_text_in_line("Msg Descriptografada:", 3, 0);
-    display_text_in_line(decrypted, 4, 0); // Exibe a string hexadecimal
+// Placeholder for AES_MODE
+void on_message_aes_mode(const char *topic, const uint8_t *payload, size_t len)
+{
+    printf("[AES] Mensagem recebida. Lógica de AES não implementada.\n");
+    display_text_in_line("Msg AES (NI)", 1, 0);
+    char len_str[16];
+    snprintf(len_str, sizeof(len_str), "Len: %u", len);
+    display_text_in_line(len_str, 2, 0);
+    display_text_in_line("", 3, 0);
+    display_text_in_line("", 4, 0);
+    // Implement AES decryption and replay detection here
 }
 
 int main()
@@ -134,21 +196,154 @@ int main()
     display_text_in_line(MQTT_CLIENT_ID_SUBSCRIBER, 3, 0);
     sleep_ms(2000);
 
-    // Define o handler para mensagens recebidas
-    mqtt_comm_set_message_handler(on_message);
-
     // Inscreve no tópico de interesse
     mqtt_comm_subscribe(MQTT_TOPIC_SUBSCRIBE);
 
     printf("Aguardando mensagens no tópico: %s\n", MQTT_TOPIC_SUBSCRIBE);
 
-    // Loop principal – mantem o programa rodando
-    while (1)
+    bool first_draw_for_state = true;
+
+    while (true)
     {
-        // Se necessário, adicione chamada à função de manutenção da lib MQTT
-        // Exemplo: mqtt_yield(); ou mqtt_loop();
-        sleep_ms(100);
+        switch (current_mode)
+        {
+        case MAIN_MENU:
+            if (first_draw_for_state)
+            {
+                // Consider display_clear() here if menu should always redraw on clean screen
+                draw_menu("SUBSCRIBER", main_menu_items, main_menu_count, main_menu_selected_idx);
+                first_draw_for_state = false;
+            }
+            int previous_main_menu_idx = main_menu_selected_idx;
+            joystick_handle_menu_navigation(main_menu_count, &main_menu_selected_idx);
+            if (previous_main_menu_idx != main_menu_selected_idx)
+                first_draw_for_state = true;
+
+            if (button_get_pressed_and_reset())
+            {
+                OperationMode previous_op_mode = current_mode;
+                if (main_menu_selected_idx == 0)
+                {
+                    current_mode = NORMAL_MODE;
+                    mqtt_comm_set_message_handler(on_message_normal_mode);
+                    printf("Modo Normal selecionado.\n");
+                }
+                else if (main_menu_selected_idx == 1)
+                {
+                    current_mode = XOR_MODE;
+                    mqtt_comm_set_message_handler(on_message_xor_mode);
+                    printf("Modo XOR selecionado.\n");
+                }
+                else if (main_menu_selected_idx == 2)
+                {
+                    current_mode = HMAC_MODE;
+                    mqtt_comm_set_message_handler(on_message_hmac_mode);
+                    printf("Modo HMAC selecionado (NI).\n");
+                }
+                else if (main_menu_selected_idx == 3)
+                {
+                    current_mode = AES_MODE;
+                    mqtt_comm_set_message_handler(on_message_aes_mode);
+                    printf("Modo AES selecionado (NI).\n");
+                }
+
+                if (previous_op_mode == MAIN_MENU && current_mode != MAIN_MENU)
+                {
+                    display_clear(); // Clear menu before showing mode screen
+                }
+                first_draw_for_state = true;
+            }
+            break;
+        case NORMAL_MODE:
+        {
+            if (first_draw_for_state)
+            {
+                display_clear();
+                display_text_in_line("Modo: Sem Seguranca", 0, 0);
+                display_text_in_line("Aguardando msg...", 1, 0);
+                display_text_in_line("", 2, 0);
+                display_text_in_line("", 3, 0);
+                display_text_in_line("", 4, 0);
+                first_draw_for_state = false;
+            }
+            if (button_get_pressed_and_reset())
+            {
+                current_mode = MAIN_MENU;
+                main_menu_selected_idx = 0;
+                first_draw_for_state = true;
+                // No break here, outer loop handles switch to MAIN_MENU on next iteration
+            }
+            // MQTT messages handled by callback. Add other mode-specific periodic tasks if any.
+            sleep_ms(100);
+        }
+        break;
+        case XOR_MODE:
+        {
+            if (first_draw_for_state)
+            {
+                display_clear();
+                display_text_in_line("Modo: Encriptacao XOR", 0, 0);
+                display_text_in_line("Aguardando msg...", 1, 0);
+                display_text_in_line("", 2, 0);
+                display_text_in_line("", 3, 0);
+                display_text_in_line("", 4, 0);
+                first_draw_for_state = false;
+            }
+            if (button_get_pressed_and_reset())
+            {
+                current_mode = MAIN_MENU;
+                main_menu_selected_idx = 1;
+                first_draw_for_state = true;
+            }
+            sleep_ms(100);
+        }
+        break;
+        case HMAC_MODE:
+        {
+            if (first_draw_for_state)
+            {
+                display_clear();
+                display_text_in_line("Modo: HMAC", 0, 0);
+                display_text_in_line("Nao implementado", 1, 0);
+                display_text_in_line("Aguardando msg...", 2, 0);
+                display_text_in_line("", 3, 0);
+                display_text_in_line("", 4, 0);
+                first_draw_for_state = false;
+            }
+            if (button_get_pressed_and_reset())
+            {
+                current_mode = MAIN_MENU;
+                main_menu_selected_idx = 2;
+                first_draw_for_state = true;
+            }
+            sleep_ms(100);
+        }
+        break;
+        case AES_MODE:
+        {
+            if (first_draw_for_state)
+            {
+                display_clear();
+                display_text_in_line("Modo: AES-GCM", 0, 0);
+                display_text_in_line("Nao implementado", 1, 0);
+                display_text_in_line("Aguardando msg...", 2, 0);
+                display_text_in_line("", 3, 0);
+                display_text_in_line("", 4, 0);
+                first_draw_for_state = false;
+            }
+            if (button_get_pressed_and_reset())
+            {
+                current_mode = MAIN_MENU;
+                main_menu_selected_idx = 3;
+                first_draw_for_state = true;
+            }
+            sleep_ms(100);
+        }
+        break;
+        }
+        tight_loop_contents();
     }
+
     return 0;
 }
 

@@ -127,3 +127,9 @@ void draw_top_title_subscriber()
     ssd1306_draw_line(&display, 0, OLED_LINE_HEIGHT - 2, OLED_WIDTH, OLED_LINE_HEIGHT - 2); // Linha separadora
     ssd1306_show(&display);                                                                 // Atualiza o display
 }
+
+void display_clear()
+{
+    ssd1306_clear(&display);
+    ssd1306_show(&display); // Atualiza o display para limpar a tela
+}
